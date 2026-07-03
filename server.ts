@@ -88,9 +88,29 @@ async function startServer() {
           macArthurIndex: {
             description: "맥아더의 강해설교 철학에 얼마나 일치하는지 수치화 (0~100) (MacArthur Index)",
             type: Type.INTEGER
+          },
+          authorityScore: {
+            description: "하나님의 권위 vs 설교자의 권위 점수 (0~100)",
+            type: Type.INTEGER
+          },
+          exegesisScore: {
+            description: "본문의 원래 의미(Exegesis) 점수 (0~100)",
+            type: Type.INTEGER
+          },
+          christCenteredScore: {
+            description: "그리스도 중심성 점수 (0~100)",
+            type: Type.INTEGER
+          },
+          applicationScore: {
+            description: "성령의 사역과 적용 점수 (0~100)",
+            type: Type.INTEGER
+          },
+          attitudeScore: {
+            description: "설교자의 태도 점수 (0~100)",
+            type: Type.INTEGER
           }
         },
-        required: ["summary", "strengths", "concerns", "evaluation", "macArthurIndex"]
+        required: ["summary", "strengths", "concerns", "evaluation", "macArthurIndex", "authorityScore", "exegesisScore", "christCenteredScore", "applicationScore", "attitudeScore"]
       };
 
       const systemInstruction = `

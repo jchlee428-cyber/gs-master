@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import { BookOpen, Send, AlertTriangle, CheckCircle, BrainCircuit, Activity, ChevronRight, RefreshCw, History as HistoryIcon, X, Trash2, MessageSquareQuote, Share2, Copy, Info, Download, FileText, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import html2pdf from 'html2pdf.js';
@@ -24,6 +25,11 @@ export interface AnalysisResult {
   concerns: string[];
   evaluation: string;
   macArthurIndex: number;
+  authorityScore?: number;
+  exegesisScore?: number;
+  christCenteredScore?: number;
+  applicationScore?: number;
+  attitudeScore?: number;
 }
 
 export interface HistoryItem {
@@ -198,6 +204,11 @@ export default function App() {
 
   const handleAnalyze = async () => {
     if (!sermonText.trim()) return;
+    if (!user) {
+      alert("먼저 로그인하세요.");
+      setIsAuthModalOpen(true);
+      return;
+    }
     
     setIsAnalyzing(true);
     setError(null);
@@ -238,19 +249,20 @@ export default function App() {
         setSermonTitle(data.title);
       }
       
-      // Save to Firestore
-      const docRef = await addDoc(collection(db, 'sermons'), {
-        userId: user?.uid || 'anonymous',
-        title: data.title || sermonTitle,
-        sermonText: data.sermonText || sermonText,
+      // Save to Firestore non-blocking
+      addDoc(collection(db, 'sermons'), {
+        userId: user.uid,
+        title: data.title,
+        sermonText: data.sermonText,
         result: data.result,
-        createdAt: new Date().toISOString(),
-        tags: []
+        createdAt: new Date().toISOString()
+      }).then(docRef => {
+        const newHistoryItem = { id: docRef.id, ...data, userId: user.uid, createdAt: new Date().toISOString() };
+        setHistory(prev => [newHistoryItem, ...prev]);
+        setCurrentHistoryId(docRef.id);
+      }).catch(err => {
+        console.error("Firestore save error:", err);
       });
-      
-      const newHistoryItem = { id: docRef.id, ...data, userId: user?.uid || 'anonymous', createdAt: new Date().toISOString(), tags: [] };
-      setHistory(prev => [newHistoryItem, ...prev]);
-      setCurrentHistoryId(docRef.id);
     } catch (err: any) {
       console.error(err);
       if (err.name === 'AbortError') {
@@ -299,9 +311,9 @@ export default function App() {
       setReconstructedSermon(data.sermon);
       
       if (currentHistoryId) {
-        await updateDoc(doc(db, 'sermons', currentHistoryId), {
+        updateDoc(doc(db, 'sermons', currentHistoryId), {
           reconstructedSermon: data.sermon
-        });
+        }).catch(err => console.error("Firestore update error:", err));
       }
     } catch (err: any) {
       console.error(err);
@@ -350,9 +362,9 @@ export default function App() {
       setReconstructedSermon(data.sermon);
       
       if (currentHistoryId) {
-        await updateDoc(doc(db, 'sermons', currentHistoryId), {
+        updateDoc(doc(db, 'sermons', currentHistoryId), {
           reconstructedSermon: data.sermon
-        });
+        }).catch(err => console.error("Firestore update error:", err));
       }
     } catch (err: any) {
       console.error(err);
@@ -564,14 +576,6 @@ export default function App() {
               <span className="font-semibold text-stone-300 tracking-wider text-sm">신학적 분석</span>
             </div>
             <div className="flex items-center gap-3">
-              {!isAdminView && (
-                <button 
-                  onClick={() => setIsSidebarOpen(true)} 
-                  className="flex items-center gap-2 px-3 py-1.5 bg-stone-800/80 hover:bg-stone-700 text-stone-300 rounded-full text-sm font-medium transition-all"
-                >
-                  <HistoryIcon size={16} /> {user ? '내 분석 기록' : '이전 기록'}
-                </button>
-              )}
               {user ? (
                 <div className="flex items-center gap-3">
                   {isAdmin && (
@@ -835,20 +839,38 @@ export default function App() {
             >
               {/* Score Header */}
               <div className="flex flex-col gap-4 bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
-                <div className="flex items-center justify-between">
-                  <div className="flex flex-col">
+                <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                  <div className="flex flex-col flex-1 w-full text-center md:text-left">
                     <span className="text-sm font-semibold tracking-wider text-stone-500 mb-1">맥아더 지수</span>
-                    <h2 className="text-3xl font-serif font-bold text-stone-800">강해설교 일치도</h2>
+                    <h2 className="text-3xl font-serif font-bold text-stone-800 mb-4">강해설교 일치도</h2>
+                    <div className="flex items-baseline gap-1 justify-center md:justify-start">
+                      <span className={`text-6xl font-bold font-serif tabular-nums tracking-tighter ${getScoreColor(result.macArthurIndex)}`}>
+                        {result.macArthurIndex}
+                      </span>
+                      <span className="text-2xl font-bold text-stone-400">%</span>
+                    </div>
                   </div>
-                  <div className="flex items-baseline gap-1">
-                    <span className={`text-6xl font-bold font-serif tabular-nums tracking-tighter ${getScoreColor(result.macArthurIndex)}`}>
-                      {result.macArthurIndex}
-                    </span>
-                    <span className="text-2xl font-bold text-stone-400">%</span>
+                  
+                  {/* Radar Chart */}
+                  <div className="w-full md:w-72 h-64 md:h-72 flex-shrink-0 -my-4">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RadarChart cx="50%" cy="50%" outerRadius="60%" data={[
+                        { subject: '권위', A: result.authorityScore ?? result.macArthurIndex, fullMark: 100 },
+                        { subject: '원래 의미', A: result.exegesisScore ?? result.macArthurIndex, fullMark: 100 },
+                        { subject: '그리스도', A: result.christCenteredScore ?? result.macArthurIndex, fullMark: 100 },
+                        { subject: '성령의 사역', A: result.applicationScore ?? result.macArthurIndex, fullMark: 100 },
+                        { subject: '설교자 태도', A: result.attitudeScore ?? result.macArthurIndex, fullMark: 100 },
+                      ]}>
+                        <PolarGrid stroke="#e5e7eb" />
+                        <PolarAngleAxis dataKey="subject" tick={{ fill: '#78716c', fontSize: 11 }} />
+                        <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fill: '#a8a29e', fontSize: 10 }} />
+                        <Radar name="Score" dataKey="A" stroke="#d97706" fill="#f59e0b" fillOpacity={0.4} />
+                      </RadarChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
                 
-                <div className="flex justify-end gap-2 border-t border-stone-100 pt-3">
+                <div className="flex justify-end gap-2 border-t border-stone-100 pt-3 mt-2">
                   <button
                     onClick={handleDownloadPDF}
                     className="flex items-center gap-2 text-sm text-stone-500 hover:text-stone-800 transition-colors px-3 py-1.5 rounded-lg hover:bg-stone-50 font-medium"
