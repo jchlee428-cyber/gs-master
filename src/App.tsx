@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { BookOpen, Send, AlertTriangle, CheckCircle, BrainCircuit, Activity, ChevronRight, RefreshCw, History as HistoryIcon, X, Trash2, MessageSquareQuote, Share2, Copy, Info, Download } from 'lucide-react';
+import { BookOpen, Send, AlertTriangle, CheckCircle, BrainCircuit, Activity, ChevronRight, RefreshCw, History as HistoryIcon, X, Trash2, MessageSquareQuote, Share2, Copy, Info, Download, FileText, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import html2pdf from 'html2pdf.js';
 import Markdown from 'react-markdown';
@@ -15,8 +15,10 @@ import { collection, addDoc, getDocs, deleteDoc, doc, query, where, orderBy, upd
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
 
 import { AuthModal } from './components/AuthModal';
+import AdminDashboard from './components/AdminDashboard';
+import { TagManager } from './components/TagManager';
 
-interface AnalysisResult {
+export interface AnalysisResult {
   summary: string;
   strengths: string[];
   concerns: string[];
@@ -24,7 +26,7 @@ interface AnalysisResult {
   macArthurIndex: number;
 }
 
-interface HistoryItem {
+export interface HistoryItem {
   id: string;
   createdAt: string;
   title: string;
@@ -32,15 +34,24 @@ interface HistoryItem {
   result: AnalysisResult;
   reconstructedSermon?: string;
   userId?: string;
+  tags?: string[];
 }
 
 export default function App() {
   const [sermonTitle, setSermonTitle] = useState('');
   const [sermonText, setSermonText] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [history, setHistory] = useState<HistoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('sermonHistory');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [reconstructedSermon, setReconstructedSermon] = useState<string | null>(null);
   const [isReconstructing, setIsReconstructing] = useState(false);
@@ -49,8 +60,17 @@ export default function App() {
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
   const [isAdminView, setIsAdminView] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
   const isAdmin = user?.email === 'jchlee428@gmail.com';
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('sermonHistory', JSON.stringify(history));
+    } catch (e) {
+      console.error("Failed to save history to localStorage", e);
+    }
+  }, [history]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -66,8 +86,6 @@ export default function App() {
   useEffect(() => {
     if (user) {
       fetchHistory();
-    } else {
-      setHistory([]);
     }
   }, [user, isAdminView]);
 
@@ -94,7 +112,11 @@ export default function App() {
         const item = doc.data() as Omit<HistoryItem, 'id'>;
         data.push({ id: doc.id, ...item });
       });
-      data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      data.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
       setHistory(data);
     } catch (err) {
       console.error("Failed to fetch history", err);
@@ -108,7 +130,9 @@ export default function App() {
     }
 
     try {
-      await deleteDoc(doc(db, 'sermons', id));
+      if (user) {
+        await deleteDoc(doc(db, 'sermons', id));
+      }
       setHistory(prev => prev.filter(item => item.id !== id));
       if (currentHistoryId === id) {
         setResult(null);
@@ -121,25 +145,76 @@ export default function App() {
     }
   };
 
+  const handleUpdateTags = async (id: string, newTags: string[]) => {
+    try {
+      if (user) {
+        await updateDoc(doc(db, 'sermons', id), { tags: newTags });
+      }
+      setHistory(prev => prev.map(item => item.id === id ? { ...item, tags: newTags } : item));
+    } catch (err) {
+      console.error("Failed to update tags", err);
+      alert('태그 업데이트 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch('/api/extract-text', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || '파일 처리에 실패했습니다.');
+      }
+
+      const data = await response.json();
+      setSermonText(data.text);
+      
+      if (!sermonTitle) {
+        const titleWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+        setSermonTitle(titleWithoutExt);
+      }
+    } catch (err: any) {
+      console.error('File upload error:', err);
+      setError(err.message || '파일 업로드 및 텍스트 추출에 실패했습니다.');
+    } finally {
+      setIsUploading(false);
+      if (e.target) {
+        e.target.value = '';
+      }
+    }
+  };
+
   const handleAnalyze = async () => {
     if (!sermonText.trim()) return;
-    if (!user) {
-      alert("로그인이 필요합니다.");
-      return;
-    }
     
     setIsAnalyzing(true);
     setError(null);
     setReconstructedSermon(null);
     setCurrentHistoryId(null);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds timeout
     
     try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: sermonTitle, text: sermonText }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         const contentType = response.headers.get("content-type");
@@ -165,19 +240,24 @@ export default function App() {
       
       // Save to Firestore
       const docRef = await addDoc(collection(db, 'sermons'), {
-        userId: user.uid,
-        title: data.title,
-        sermonText: data.sermonText,
+        userId: user?.uid || 'anonymous',
+        title: data.title || sermonTitle,
+        sermonText: data.sermonText || sermonText,
         result: data.result,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        tags: []
       });
       
-      const newHistoryItem = { id: docRef.id, ...data, userId: user.uid, createdAt: new Date().toISOString() };
+      const newHistoryItem = { id: docRef.id, ...data, userId: user?.uid || 'anonymous', createdAt: new Date().toISOString(), tags: [] };
       setHistory(prev => [newHistoryItem, ...prev]);
       setCurrentHistoryId(docRef.id);
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'An unexpected error occurred.');
+      if (err.name === 'AbortError') {
+        setError('서버 응답 시간이 초과되었습니다 (60초). 텍스트 분량을 줄이거나 잠시 후 다시 시도해주세요.');
+      } else {
+        setError(err.message || 'An unexpected error occurred.');
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -187,6 +267,8 @@ export default function App() {
     if (!result) return;
     
     setIsReconstructing(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const response = await fetch('/api/reconstruct', {
         method: 'POST',
@@ -196,7 +278,9 @@ export default function App() {
           text: sermonText,
           summary: result.summary 
         }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         const contentType = response.headers.get("content-type");
@@ -221,7 +305,11 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      alert(err.message || '설교문 재구성에 실패했습니다.');
+      if (err.name === 'AbortError') {
+        alert('서버 응답 시간이 초과되었습니다 (60초). 잠시 후 다시 시도해주세요.');
+      } else {
+        alert(err.message || '설교문 재구성에 실패했습니다.');
+      }
     } finally {
       setIsReconstructing(false);
     }
@@ -231,6 +319,8 @@ export default function App() {
     if (!reconstructedSermon) return;
     
     setIsExpanding(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const response = await fetch('/api/expand-reconstruct', {
         method: 'POST',
@@ -239,7 +329,9 @@ export default function App() {
           title: sermonTitle, 
           reconstructedSermon 
         }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         const contentType = response.headers.get("content-type");
@@ -264,7 +356,11 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      alert(err.message || '설교문 확장에 실패했습니다.');
+      if (err.name === 'AbortError') {
+        alert('서버 응답 시간이 초과되었습니다 (60초). 잠시 후 다시 시도해주세요.');
+      } else {
+        alert(err.message || '설교문 확장에 실패했습니다.');
+      }
     } finally {
       setIsExpanding(false);
     }
@@ -464,16 +560,18 @@ export default function App() {
         <div className="max-w-5xl mx-auto relative z-10">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-3">
-              <button 
-                onClick={() => setIsSidebarOpen(true)} 
-                className="flex items-center gap-2 px-3 py-1.5 bg-stone-800/80 hover:bg-stone-700 text-stone-300 rounded-full text-sm font-medium transition-all mr-2"
-              >
-                <HistoryIcon size={16} /> 이전 기록
-              </button>
               <BookOpen className="text-amber-400" size={28} />
               <span className="font-semibold text-stone-300 tracking-wider text-sm">신학적 분석</span>
             </div>
-            <div>
+            <div className="flex items-center gap-3">
+              {!isAdminView && (
+                <button 
+                  onClick={() => setIsSidebarOpen(true)} 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-stone-800/80 hover:bg-stone-700 text-stone-300 rounded-full text-sm font-medium transition-all"
+                >
+                  <HistoryIcon size={16} /> {user ? '내 분석 기록' : '이전 기록'}
+                </button>
+              )}
               {user ? (
                 <div className="flex items-center gap-3">
                   {isAdmin && (
@@ -481,7 +579,7 @@ export default function App() {
                       onClick={() => setIsAdminView(!isAdminView)}
                       className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${isAdminView ? 'bg-amber-600 text-white' : 'bg-stone-800/80 hover:bg-stone-700 text-amber-400'}`}
                     >
-                      {isAdminView ? '내 기록 보기' : '전체 기록 관리'}
+                      {isAdminView ? '메인으로' : '관리자페이지'}
                     </button>
                   )}
                   <span className="text-stone-300 text-sm hidden md:inline">{user.email}</span>
@@ -504,9 +602,19 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 w-full max-w-5xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8 my-8 pb-20">
-        
-        {/* Sidebar Overlay */}
+      {isAdminView ? (
+        <AdminDashboard onViewItem={(item) => {
+          setSermonTitle(item.title && item.title !== (item.result.summary.substring(0, 50) + "...") ? item.title : '');
+          setSermonText(item.sermonText);
+          setResult(item.result);
+          setReconstructedSermon(item.reconstructedSermon || null);
+          setCurrentHistoryId(item.id);
+          setIsAdminView(false); // return to main view to see the result
+        }} />
+      ) : (
+        <main className="flex-1 w-full max-w-5xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-8 my-8 pb-20">
+          
+          {/* Sidebar Overlay */}
         {isSidebarOpen && (
           <div 
             className="fixed inset-0 bg-stone-900/40 z-40 backdrop-blur-sm"
@@ -516,36 +624,60 @@ export default function App() {
 
         {/* Sidebar */}
         <div className={`fixed inset-y-0 left-0 w-80 bg-white shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-          <div className="flex items-center justify-between p-6 border-b border-stone-100">
-            <h2 className="text-xl font-bold font-serif flex items-center gap-2">
-              <HistoryIcon size={20} className="text-stone-600" />
-              {isAdminView ? '전체 분석 기록' : '내 분석 기록'}
-            </h2>
-            <button onClick={() => setIsSidebarOpen(false)} className="text-stone-400 hover:text-stone-700 transition">
-              <X size={24} />
-            </button>
+          <div className="flex flex-col p-6 border-b border-stone-100 gap-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold font-serif flex items-center gap-2">
+                <HistoryIcon size={20} className="text-stone-600" />
+                {isAdminView ? '전체 분석 기록' : '내 분석 기록'}
+              </h2>
+              <button onClick={() => setIsSidebarOpen(false)} className="text-stone-400 hover:text-stone-700 transition">
+                <X size={24} />
+              </button>
+            </div>
+            
+            {/* Tag Filter */}
+            {Array.from(new Set(history.flatMap(item => item.tags || []))).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-2">
+                <button
+                  onClick={() => setSelectedTag(null)}
+                  className={`text-[10px] px-2 py-1 rounded-full transition-colors ${!selectedTag ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+                >
+                  전체
+                </button>
+                {Array.from(new Set(history.flatMap(item => item.tags || []))).sort().map(tag => (
+                  <button
+                    key={tag}
+                    onClick={() => setSelectedTag(tag === selectedTag ? null : tag)}
+                    className={`text-[10px] px-2 py-1 rounded-full transition-colors ${tag === selectedTag ? 'bg-amber-600 text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'}`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {history.length === 0 ? (
+            {history.filter(item => !selectedTag || (item.tags && item.tags.includes(selectedTag))).length === 0 ? (
               <div className="text-center text-stone-400 py-10 mt-10">
                 <p>저장된 기록이 없습니다.</p>
               </div>
             ) : (
-              history.map((item) => (
+              history.filter(item => !selectedTag || (item.tags && item.tags.includes(selectedTag))).map((item) => (
                 <button
                   key={item.id}
                   onClick={() => {
                     setSermonTitle(item.title && item.title !== (item.result.summary.substring(0, 50) + "...") ? item.title : '');
                     setSermonText(item.sermonText);
                     setResult(item.result);
-                    setReconstructedSermon(null);
+                    setReconstructedSermon(item.reconstructedSermon || null);
+                    setCurrentHistoryId(item.id);
                     setIsSidebarOpen(false);
                   }}
                   className="w-full text-left p-4 rounded-xl border border-stone-100 bg-stone-50 hover:bg-stone-100 hover:border-stone-200 transition-all flex flex-col gap-2"
                 >
                   <div className="flex justify-between items-start w-full">
                     <div className="flex flex-col gap-1">
-                      <span className="text-xs text-stone-400 font-medium whitespace-nowrap">{new Date(item.createdAt).toLocaleDateString()}</span>
+                      <span className="text-xs text-stone-400 font-medium whitespace-nowrap">{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '이전 기록'}</span>
                       {isAdminView && item.userId && (
                         <span className="text-[10px] text-stone-400 truncate max-w-[120px]">User: {item.userId}</span>
                       )}
@@ -564,6 +696,15 @@ export default function App() {
                     </div>
                   </div>
                   <h3 className="font-medium text-stone-800 text-sm line-clamp-2 leading-relaxed">{item.title}</h3>
+                  {item.tags && item.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {item.tags.map(tag => (
+                        <span key={tag} className="text-[9px] px-1.5 py-0.5 bg-stone-200 text-stone-600 rounded">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </button>
               ))
             )}
@@ -578,14 +719,21 @@ export default function App() {
                 <BrainCircuit size={20} className="text-stone-600" />
                 설교 본문 또는 요약
               </label>
-              {result && (
-                <button 
-                  onClick={() => setResult(null)}
-                  className="text-sm text-stone-500 hover:text-stone-800 flex items-center gap-1 transition-colors"
-                >
-                  <RefreshCw size={14} /> 다시 분석하기
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                <label className={`cursor-pointer text-sm bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${isUploading || isAnalyzing ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {isUploading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                  <span>{isUploading ? '업로드 중...' : '문서 파일 업로드'}</span>
+                  <input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" onChange={handleFileUpload} disabled={isUploading || isAnalyzing} />
+                </label>
+                {result && (
+                  <button 
+                    onClick={() => setResult(null)}
+                    className="text-sm text-stone-500 hover:text-stone-800 flex items-center gap-1 transition-colors px-2"
+                  >
+                    <RefreshCw size={14} /> 다시 분석하기
+                  </button>
+                )}
+              </div>
             </div>
             
             <input
@@ -718,6 +866,21 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Tag Manager */}
+              {currentHistoryId && (
+                <TagManager 
+                  tags={history.find(h => h.id === currentHistoryId)?.tags || []} 
+                  onAddTag={(tag) => {
+                    const currentTags = history.find(h => h.id === currentHistoryId)?.tags || [];
+                    handleUpdateTags(currentHistoryId, [...currentTags, tag]);
+                  }}
+                  onRemoveTag={(tag) => {
+                    const currentTags = history.find(h => h.id === currentHistoryId)?.tags || [];
+                    handleUpdateTags(currentHistoryId, currentTags.filter(t => t !== tag));
+                  }}
+                />
+              )}
+
               {/* Summary */}
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
                 <h3 className="text-lg font-bold font-serif mb-4 flex items-center gap-2 border-b border-stone-100 pb-3">
@@ -845,6 +1008,7 @@ export default function App() {
         </AnimatePresence>
 
       </main>
+      )}
 
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
     </div>

@@ -3,6 +3,12 @@ import path from "path";
 import fs from "fs/promises";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
+import multer from "multer";
+import mammoth from "mammoth";
+import { PDFParse } from "pdf-parse";
+
+// Configure multer to use memory storage
+const upload = multer({ storage: multer.memoryStorage() });
 
 async function startServer() {
   const app = express();
@@ -11,6 +17,38 @@ async function startServer() {
   // Body parser for JSON requests
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+  // API Route for extracting text from files
+  app.post("/api/extract-text", upload.single("file"), async (req: express.Request, res: express.Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded." });
+      }
+
+      const { mimetype, buffer, originalname } = req.file;
+      let extractedText = "";
+
+      if (mimetype === "application/pdf" || originalname.toLowerCase().endsWith(".pdf")) {
+        const parser = new (PDFParse as any)({ data: new Uint8Array(buffer) });
+        await parser.load();
+        const textResult = await parser.getText();
+        extractedText = typeof textResult === 'string' ? textResult : (textResult.text || '');
+      } else if (
+        mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || 
+        originalname.toLowerCase().endsWith(".docx")
+      ) {
+        const result = await mammoth.extractRawText({ buffer });
+        extractedText = result.value;
+      } else {
+        return res.status(400).json({ error: "지원하지 않는 파일 형식입니다. PDF 또는 DOCX 파일을 업로드해주세요." });
+      }
+
+      res.json({ text: extractedText });
+    } catch (error: any) {
+      console.error("Text extraction error:", error);
+      res.status(500).json({ error: "파일 텍스트 추출 중 오류가 발생했습니다." });
+    }
+  });
 
   // API Route for analyzing sermon
   app.post("/api/analyze", async (req, res) => {
