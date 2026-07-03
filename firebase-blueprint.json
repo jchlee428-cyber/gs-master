@@ -1,0 +1,16 @@
+{
+  "collections": [
+    {
+      "name": "sermons",
+      "description": "Stores sermon analysis results for users",
+      "fields": [
+        { "name": "userId", "type": "string", "description": "The ID of the user who analyzed the sermon" },
+        { "name": "title", "type": "string", "description": "Title of the sermon" },
+        { "name": "sermonText", "type": "string", "description": "The text of the sermon" },
+        { "name": "result", "type": "map", "description": "The analysis result" },
+        { "name": "createdAt", "type": "timestamp", "description": "When the analysis was performed" },
+        { "name": "reconstructedSermon", "type": "string", "description": "The reconstructed sermon text (optional)" }
+      ]
+    }
+  ]
+}
