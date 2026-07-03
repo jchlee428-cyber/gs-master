@@ -125,6 +125,8 @@ async function startServer() {
 5. 설교자의 태도: 자신을 주인공으로 삼거나 개인적 예화를 남발하여 하나님의 영광을 가리지 않는가?
 
 제공된 설교 내용을 심도있게 분석하고, 지정된 JSON 스키마 형식에 맞추어 한국어로 응답해줘.
+어떠한 경우에도 반드시 유효한 JSON 형식으로만 응답해야 하며, 그 외의 텍스트나 마크다운은 절대 포함하지 마라.
+분석할 수 없는 내용이라면 문자열 필드에는 "분석 불가", 숫자 필드에는 0을 입력하여 완벽한 JSON 구조를 유지하라.
       `;
 
       let response;
@@ -179,7 +181,16 @@ async function startServer() {
         throw new Error("No response generated from Gemini.");
       }
 
-      const parsedResult = JSON.parse(responseText);
+      
+      let parsedResult;
+      try {
+        let cleanText = responseText.replace(/^\s*```json\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+        parsedResult = JSON.parse(cleanText);
+      } catch (e) {
+        console.error("Failed to parse JSON. Raw response:", responseText);
+        throw new Error("AI 응답을 JSON으로 파싱하는데 실패했습니다. 텍스트를 다시 확인해주세요.");
+      }
+
       const historyItem = {
         title: title ? title.substring(0, 100) : parsedResult.summary.substring(0, 50) + "...",
         sermonText: text,
