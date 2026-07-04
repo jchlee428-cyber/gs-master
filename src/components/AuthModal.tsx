@@ -36,7 +36,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       onClose();
     } catch (err: any) {
       console.error(err);
-      setError(err.message || '인증에 실패했습니다. 이메일과 비밀번호를 확인해주세요.');
+      let errorMessage = '인증에 실패했습니다. 이메일과 비밀번호를 확인해주세요.';
+      if (err.code === 'auth/email-already-in-use') {
+        errorMessage = '이미 사용 중인 이메일입니다.';
+      } else if (err.code === 'auth/invalid-email') {
+        errorMessage = '유효하지 않은 이메일 형식입니다.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMessage = '이메일/비밀번호 로그인이 비활성화되어 있습니다. 관리자에게 문의하거나 구글 로그인을 이용해주세요.';
+      } else if (err.code === 'auth/weak-password') {
+        errorMessage = '비밀번호는 6자리 이상이어야 합니다.';
+      } else if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+        errorMessage = '이메일 또는 비밀번호가 올바르지 않습니다.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -49,7 +63,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       onClose();
     } catch (err: any) {
       console.error("Login failed", err);
-      setError(`로그인 실패: ${err.message || '인증 도메인을 확인해주세요.'}`);
+      let errorMessage = '구글 로그인에 실패했습니다. 인증 도메인을 확인해주세요.';
+      if (err.code === 'auth/popup-closed-by-user') {
+        errorMessage = '로그인 팝업이 닫혔습니다.';
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        errorMessage = '여러 개의 로그인 팝업이 열렸습니다.';
+      } else if (err.message) {
+        errorMessage = `로그인 실패: ${err.message}`;
+      }
+      setError(errorMessage);
     }
   };
 
