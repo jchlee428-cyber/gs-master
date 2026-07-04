@@ -180,12 +180,32 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
+        let errData;
+        const textRes = await response.text();
+        try {
+          errData = JSON.parse(textRes);
+        } catch (e) {
+          console.error("Non-JSON error response:", textRes);
+          if (response.status === 413) {
+            throw new Error("파일 크기가 너무 큽니다. 32MB 이하의 파일을 업로드해주세요.");
+          } else if (response.status === 504) {
+            throw new Error("파일 처리 시간이 초과되었습니다. 더 작은 파일을 업로드해주세요.");
+          } else if (response.status === 404) {
+            throw new Error("파일 처리 서버를 찾을 수 없습니다. 배포 환경을 확인해주세요.");
+          }
+          throw new Error("서버 통신 오류가 발생했습니다. (" + response.status + ")");
+        }
         throw new Error(errData.error || '파일 처리에 실패했습니다.');
       }
 
-      const data = await response.json();
-      setSermonText(data.text);
+      let textRes2 = "";
+      try {
+        textRes2 = await response.text();
+        const data = JSON.parse(textRes2);
+        setSermonText(data.text);
+      } catch(e) {
+        throw new Error("서버 응답 오류: " + textRes2.substring(0, 50) + "...");
+      }
       
       if (!sermonTitle) {
         const titleWithoutExt = file.name.replace(/\.[^/.]+$/, "");
@@ -760,9 +780,9 @@ export default function App() {
             />
             
             {error && (
-              <div className="mt-4 p-3 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg flex items-start gap-2 text-sm">
-                <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-                <p>{error}</p>
+              <div className="mt-4 p-4 bg-rose-50/80 text-rose-700 border border-rose-200/60 rounded-xl flex items-start gap-3 text-sm shadow-sm">
+                <AlertTriangle size={20} className="shrink-0 mt-0.5 text-rose-500" />
+                <p className="font-medium leading-relaxed">{error}</p>
               </div>
             )}
             
